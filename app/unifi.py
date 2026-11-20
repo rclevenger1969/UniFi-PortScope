@@ -9,6 +9,7 @@ import ipaddress
 import os
 import ssl
 import httpx
+from .official import is_reportable, device_to_classic, client_to_classic
 
 
 class UniFiError(Exception):
@@ -110,18 +111,38 @@ class UniFi:
     def _prefix(self):
         return '/proxy/network' if self.active_mode == 'unifios' else ''
 
+    @staticmethod
+    def _integration_root(candidate):
+        return '/proxy/network/integration/v1' if candidate == 'unifios' else '/integration/v1'
+
+    def _official_pages(self, path):
+        """Fetch every page of the supported local Integration API, not just 25."""
+        offset, results, limit = 0, [], 200
+        while offset < 20000:
+            page = self.request_json('GET', f'{path}?offset={offset}&limit={limit}')
+            if not isinstance(page, dict) or not isinstance(page.get('data'), list):
+                raise UniFiError('Unexpected response from the official Network Integration API.')
+            batch = [item for item in page['data'] if isinstance(item, dict)]
+            results.extend(batch)
+            offset += len(batch)
+            count = page.get('totalCount')
+            if not batch or (isinstance(count, int) and offset >= count) or len(batch) < limit:
+                return results
+        raise UniFiError('This site exceeds the 20,000-item inventory safety limit.')
+
     def _attempt(self, candidate):
         self.http.cookies.clear()
-        if self.auth == 'password':
-            endpoint = '/api/auth/login' if candidate == 'unifios' else '/api/login'
-            self.request_json('POST', endpoint, {'username': self._login_username, 'password': self._login_password})
+        if self.auth == 'api_key':
+            sites = self._official_pages(self._integration_root(candidate) + '/sites')
+            return [{'id': str(site['id']), 'name': str(site.get('name') or site['id'])}
+                    for site in sites if site.get('id')]
+        endpoint = '/api/auth/login' if candidate == 'unifios' else '/api/login'
+        self.request_json('POST', endpoint, {'username': self._login_username, 'password': self._login_password})
         root = '/proxy/network' if candidate == 'unifios' else ''
         body = self.request_json('GET', root + '/api/self/sites')
         sites = self.unwrap(body)
-        if not isinstance(sites, list):
-            raise UniFiError('No accessible sites were returned.')
-        return [{'id': str(s.get('name', '')), 'name': str(s.get('desc') or s.get('name') or '')}
-                for s in sites if isinstance(s, dict) and s.get('name')]
+        return [{'id': str(site.get('name')), 'name': str(site.get('desc') or site.get('name'))}
+                for site in sites if isinstance(site, dict) and site.get('name')]
 
     def connect(self):
         candidates = ['unifios', 'standalone'] if self.mode == 'auto' else [self.mode]
@@ -130,33 +151,49 @@ class UniFi:
             try:
                 sites = self._attempt(candidate)
                 self.active_mode = candidate
-                # No need to retain a user's password after the initial login.
+                # Never keep user-password authentication credentials after login.
                 self._login_password = ''
                 self._login_username = ''
                 return sites
             except UniFiError as exc:
                 failures.append(str(exc))
-        # Avoid exposing sensitive URLs/tokens/passwords, preserve useful diagnostic.
         if failures and any('Certificate validation' in f for f in failures):
             raise UniFiError(next(f for f in failures if 'Certificate validation' in f))
         if failures and all('denied access' in f for f in failures):
-            raise UniFiError('Controller rejected the credentials or API key. For complete per-port detail, try a local UniFi Network account with site read access.')
+            raise UniFiError('Controller rejected the credentials or API key. Local API keys must come from Network → Integrations, not Site Manager.')
         raise UniFiError('; '.join(dict.fromkeys(failures)) or 'Could not connect to controller.')
 
     def list_sites(self):
         if not self.active_mode:
             raise UniFiError('Not connected to a Cloud Key.')
+        if self.auth == 'api_key':
+            sites = self._official_pages(self._integration_root(self.active_mode) + '/sites')
+            return [{'id': str(site['id']), 'name': str(site.get('name') or site['id'])}
+                    for site in sites if site.get('id')]
         body = self.request_json('GET', self._prefix() + '/api/self/sites')
-        return [{'id': str(s.get('name')), 'name': str(s.get('desc') or s.get('name'))}
-                for s in self.unwrap(body) if isinstance(s, dict) and s.get('name')]
+        return [{'id': str(site.get('name')), 'name': str(site.get('desc') or site.get('name'))}
+                for site in self.unwrap(body) if isinstance(site, dict) and site.get('name')]
 
     def site_data(self, site_id: str):
-        # Protect against path traversal/injection; caller must validate site membership too.
         safe = quote(site_id, safe='')
+        if self.auth == 'api_key':
+            root = self._integration_root(self.active_mode) + f'/sites/{safe}'
+            summaries = self._official_pages(root + '/devices')
+            all_by_id = {str(d['id']): d for d in summaries if d.get('id')}
+            devices = []
+            for summary in summaries:
+                if not summary.get('id') or not is_reportable(summary):
+                    continue
+                detail = self.request_json('GET', root + '/devices/' + quote(str(summary['id']), safe=''))
+                if not isinstance(detail, dict) or not detail.get('id'):
+                    raise UniFiError('Controller returned incomplete device details.')
+                devices.append(device_to_classic(detail, all_by_id))
+            clients = [client_to_classic(c) for c in self._official_pages(root + '/clients')]
+            return devices, clients, [], []
+        # Classic local session: richer port telemetry, LLDP and port profiles.
         base = f'{self._prefix()}/api/s/{safe}'
         devices = self.unwrap(self.request_json('GET', base + '/stat/device'))
         clients = self.unwrap(self.request_json('GET', base + '/stat/sta'))
-        # Some firmware hides optional config endpoints behind access permissions.
         options = {}
         for label, suffix in (('profiles', '/rest/portconf'), ('networks', '/rest/networkconf')):
             try:

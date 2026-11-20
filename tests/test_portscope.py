@@ -113,19 +113,105 @@ def test_csv_injection_defense():
     assert main.csv_safe('foo\nbar')=='foo bar'
 
 
+# The *supported* key API returns UUID site IDs and paginated device/client
+# lists, unlike the classic Network API. Simulate the official 10.6 schema.
+OFFICIAL_SITE = '6ecfe335-5555-4efb-9ed8-81e3dbe4befe'
+OFFICIAL_SWITCH = '599a435a-01bf-48c8-867d-35c4a5639cd1'
+OFFICIAL_AP = '40b87937-8817-4ac2-9ea7-fcdabc073f48'
+
+
+def official_mock(request):
+    path = request.url.path
+    offset = int(request.url.params.get('offset', 0))
+    if path == '/proxy/network/integration/v1/sites':
+        return httpx.Response(200, json={'data': [{'id': OFFICIAL_SITE, 'internalReference':'default', 'name':'County Office'}],
+                                         'offset':0, 'limit':200, 'count':1, 'totalCount':1})
+    prefix = f'/proxy/network/integration/v1/sites/{OFFICIAL_SITE}'
+    if path == prefix + '/devices':
+        payload = [
+            {'id': OFFICIAL_SWITCH, 'model':'USW-24-PoE', 'features':['switching'], 'interfaces':['ports']},
+            {'id': OFFICIAL_AP, 'model':'U6-Pro', 'features':['accessPoint'], 'interfaces':['radios']},
+            {'id':'11111111-1111-1111-1111-111111111111', 'model':'UDM',
+             'features':['routing','switching'], 'interfaces':['ports']}]
+        return httpx.Response(200, json={'data':payload,'offset':offset,'limit':200,'count':len(payload),'totalCount':3})
+    if path == prefix + '/devices/' + OFFICIAL_SWITCH:
+        return httpx.Response(200, json={
+            'id':OFFICIAL_SWITCH,'name':'Building Switch','macAddress':'aa:bb:cc:00:00:01',
+            'ipAddress':'10.0.0.33','model':'USW-24-PoE','state':'ONLINE',
+            'firmwareVersion':'7.0.0','features':{'switching': {'lags':[]}},
+            'interfaces':{'ports':[
+                {'idx':1,'connector':'RJ45','state':'UP','speedMbps':1000,
+                 'maxSpeedMbps':2500,'poe':{'enabled':True,'type':3,'standard':'802.3bt'}},
+                {'idx':2,'connector':'SFP_PLUS','state':'DOWN','maxSpeedMbps':10000},
+                {'idx':3,'state':'UNKNOWN'}]}})
+    if path == prefix + '/devices/' + OFFICIAL_AP:
+        return httpx.Response(200, json={
+            'id':OFFICIAL_AP,'name':'Hall AP','macAddress':'aa:bb:cc:00:00:02',
+            'ipAddress':'10.0.0.34','model':'U6-Pro','state':'OFFLINE',
+            'firmwareVersion':'6.6.65','features':{'accessPoint':{}},'interfaces':{'radios':[]},
+            'uplink':{'deviceId':OFFICIAL_SWITCH}})
+    if path == prefix + '/clients':
+        return httpx.Response(200, json={
+            'data':[{'id':'c1','name':'Server','macAddress':'00:11:22:33:44:55','ipAddress':'10.0.0.150','type':'WIRED'}],
+            'offset':0, 'limit':200,'count':1,'totalCount':1})
+    return httpx.Response(404,json={'message':'Not found'})
+
+
 def test_mock_api_key_does_not_send_device_writes():
     seen=[]
     def handler(request):
         seen.append((request.method, request.url.path, request.headers.get('x-api-key')))
-        return mock_cloudkey(request)
+        return official_mock(request)
     instance=UniFi('https://10.0.0.2','unifios','api_key',api_key='local-test-key')
     instance.http.close()
     instance.http=httpx.Client(transport=httpx.MockTransport(handler),headers={'X-API-Key':'local-test-key'})
     try:
-        assert instance.connect()[0]['id']=='default'
-        instance.site_data('default')
-        assert len(seen)==5
+        assert instance.connect()==[{'id':OFFICIAL_SITE,'name':'County Office'}]
+        devices,clients,profiles,nets=instance.site_data(OFFICIAL_SITE)
+        assert len(devices)==2 and len(clients)==1
+        snap=normalize({'name':OFFICIAL_SITE,'desc':'County Office'},devices,clients,profiles,nets)
+        assert snap['summary']['switches']==1 and snap['summary']['aps']==1
+        assert snap['summary']['online_switches']==1 and snap['summary']['online_aps']==0
+        assert snap['summary']['poe_w'] is None, 'Official API does not provide PoE watts'
+        ports=snap['switches'][0]['ports']
+        assert len(ports)==3 and ports[0]['state']=='up' and ports[1]['state']=='down'
+        assert ports[2]['state']=='unknown' and ports[2]['poe_enabled'] is None
+        assert ports[0]['speed']==1000 and ports[0]['max_speed']==2500
+        assert ports[0]['poe_enabled'] is True and ports[0]['poe_w'] is None
+        assert ports[1]['kind']=='SFP+'
+        assert snap['aps'][0]['uplink'] is None, 'Never invent a parent port index'
+        assert snap['aps'][0]['clients_count'] is None, 'No per-AP client counts in this response'
         assert all(method=='GET' and key=='local-test-key' for method,path,key in seen)
-        assert all('/cmd/' not in path and '/actions' not in path for method,path,key in seen)
+        assert all('/integration/v1/' in path for _,path,_ in seen)
+        assert all('/actions' not in path for _,path,_ in seen)
+    finally:
+        instance.close()
+
+
+def test_official_pages_fetch_every_page():
+    calls=[]
+    def handler(request):
+        offset=int(request.url.params.get('offset', 0))
+        calls.append(offset)
+        batch=[{'id': str(i)} for i in range(offset,min(offset+200,205))]
+        return httpx.Response(200,json={'data':batch,'offset':offset,'count':len(batch),'limit':200,'totalCount':205})
+    instance=UniFi('https://10.0.0.2','unifios','api_key',api_key='local-test-key')
+    instance.http.close()
+    instance.http=httpx.Client(transport=httpx.MockTransport(handler))
+    try:
+        assert len(instance._official_pages('/proxy/network/integration/v1/sites'))==205
+        assert calls==[0,200]
+    finally:
+        instance.close()
+
+
+def test_official_pages_reject_unexpected_response():
+    instance=UniFi('https://10.0.0.2','unifios','api_key',api_key='local-test-key')
+    instance.http.close()
+    instance.http=httpx.Client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200,json={'data':{'not':'a-list'}})))
+    try:
+        with pytest.raises(UniFiError, match='Unexpected response'):
+            instance._official_pages('/proxy/network/integration/v1/sites')
     finally:
         instance.close()

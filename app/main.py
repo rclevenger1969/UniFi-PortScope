@@ -140,6 +140,7 @@ def get_connection():
                 'url': _connection.url if _connection else None,
                 'mode': _connection.active_mode if _connection else None,
                 'auth': _connection.auth if _connection else None,
+                'api_surface': ('official' if _connection.auth == 'api_key' else 'classic') if _connection else None,
                 'verify': _connection.verify if _connection else True}
 
 
@@ -161,7 +162,8 @@ def set_connection(body: ConnectBody):
         _connection = candidate
         if old:
             old.close()
-    return {'ok': True, 'sites': sites, 'mode': candidate.active_mode}
+    return {'ok': True, 'sites': sites, 'mode': candidate.active_mode,
+            'api_surface': 'official' if candidate.auth == 'api_key' else 'classic'}
 
 
 @app.post('/api/demo', dependencies=[Depends(require_auth)])
@@ -200,8 +202,16 @@ def snapshot_for(site_id: str):
             if not match:
                 raise HTTPException(404, 'Site not found or not accessible to this account.')
             devices, clients, profiles, networks = _connection.site_data(site_id)
-            return normalize({'name': match['id'], 'desc': match['name']},
-                             devices, clients, profiles, networks, source='live')
+            result = normalize({'name': match['id'], 'desc': match['name']},
+                               devices, clients, profiles, networks, source='live')
+            result['api_surface'] = 'official' if _connection.auth == 'api_key' else 'classic'
+            if _connection.auth == 'api_key':
+                result['warnings'].insert(0,
+                    'API-key mode uses the official Network Integration API. Some detail such as '
+                    'PoE watts, VLAN/profile, LLDP neighbors, AP port association and per-port '
+                    'traffic/error counters is not exposed by this interface; select Local '
+                    'admin account for the classic, more detailed port report.')
+            return result
         except UniFiError as exc:
             raise HTTPException(502, str(exc))
 

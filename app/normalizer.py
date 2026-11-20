@@ -1,4 +1,4 @@
-"""Normalize UniFi Network (classic local API) data into one stable read-only model.
+"""Normalize UniFi Network inventory from classic and official APIs into one model.
 
 UniFi changes field names across models and firmware releases. Missing observations
 remain unknown: this module never invents negotiated links or device connections.
@@ -54,7 +54,12 @@ def as_list(v):
 def device_status(d):
     state = d.get('state')
     if state is not None:
-        return 'online' if str(state) == '1' else 'offline'
+        status = str(state).strip().upper()
+        if status in ('1', 'ONLINE', 'CONNECTED'):
+            return 'online'
+        if status in ('0', 'OFFLINE', 'DISCONNECTED', 'UNREACHABLE'):
+            return 'offline'
+        return 'unknown'
     for k in ('connected', 'online', 'is_connected'):
         if k in d and isinstance(d[k], bool):
             return 'online' if d[k] else 'offline'
@@ -92,11 +97,13 @@ def connected_client(d):
 
 
 def port_type(p):
-    media = str(pick(p, 'media', 'media_type', 'type') or '').lower()
+    media = str(pick(p, 'media', 'media_type', 'connector', 'type') or '').lower()
     name = str(pick(p, 'name', 'ifname', 'port_name') or '').lower()
     if 'sfp' in media or 'sfp' in name or '10g' in media:
-        return 'SFP+' if any(x in media + name for x in ('+', '10g', '25g')) else 'SFP'
-    return 'RJ45'
+        return 'SFP+' if any(x in media + name for x in ('+', '10g', '25g', 'plus')) else 'SFP'
+    if media in ('rj45', 'ethernet', 'copper') or 'eth' in name:
+        return 'RJ45'
+    return 'Unknown'
 
 
 def upstream(d, devices_by_mac):
@@ -152,7 +159,7 @@ def normalize(site: dict, devices: list, clients: list, profiles=None, networks=
         }
         if kind == 'ap':
             raw_count = number(pick(d, 'num_sta', 'num_clients'))
-            aps.append({**common, 'clients_count': ap_clients.get(key, raw_count or 0)})
+            aps.append({**common, 'clients_count': ap_clients.get(key, raw_count)})
             continue
         overrides = {number(p.get('port_idx')): p for p in as_list(d.get('port_overrides')) if isinstance(p, dict)}
         lldp_by_port = defaultdict(list)
@@ -198,8 +205,8 @@ def normalize(site: dict, devices: list, clients: list, profiles=None, networks=
             poe_w = number(pick(p, 'poe_power', 'poe_power_w'))
             poe_mode = pick(override, 'poe_mode') or pick(p, 'poe_mode') or pick(profile, 'poe_mode')
             poe_enabled = (str(poe_mode).lower() not in ('off', 'none', 'disabled', '') if poe_mode is not None else None)
-            if poe_enabled is None and 'port_poe' in p:
-                poe_enabled = bool(p['port_poe'])
+            if poe_enabled is None and isinstance(p.get('port_poe'), bool):
+                poe_enabled = p['port_poe']
             neighbor_rows = ap_by_port.get(idx, []) + lldp_by_port.get(idx, [])
             # Avoid double-counting an AP repeated in LLDP and explicit uplink metadata.
             seen = set()
@@ -242,6 +249,7 @@ def normalize(site: dict, devices: list, clients: list, profiles=None, networks=
     switches.sort(key=lambda x: x['name'].lower())
     aps.sort(key=lambda x: x['name'].lower())
     all_ports = [p for s in switches for p in s['ports']]
+    observed_poe = any(sw['poe_total_w'] is not None for sw in switches)
     kpis = {
         'switches': len(switches), 'aps': len(aps),
         'online_switches': sum(s['state'] == 'online' for s in switches),
@@ -250,7 +258,7 @@ def normalize(site: dict, devices: list, clients: list, profiles=None, networks=
         'active_ports': sum(p['state'] == 'up' for p in all_ports),
         'down_ports': sum(p['state'] == 'down' for p in all_ports),
         'unknown_ports': sum(p['state'] == 'unknown' for p in all_ports),
-        'poe_w': round(sum(p['poe_w'] or 0 for p in all_ports), 1),
+        'poe_w': round(sum(sw['poe_total_w'] or 0 for sw in switches), 1) if observed_poe else None,
         'clients': len(clients),
     }
     return {

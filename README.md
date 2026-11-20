@@ -1,6 +1,8 @@
-# UniFi PortScope v1.0
+# UniFi PortScope v1.1
 
 **Graphical, site-scoped UniFi switchport and access point reporting.** A lightweight read-only web application for a local UniFi Cloud Key / Cloud Key+ running UniFi Network. Works with standalone UniFi Network controllers too.
+
+Download the application and start in demo mode to preview the interactive dashboard. The GitHub source archive contains all files needed to run the app.
 
 ## What it does
 
@@ -14,9 +16,9 @@
 
 ### Supported API method
 
-This build uses the local **classic Network API**, which still supplies valuable `port_table` and `lldp_table` data in UniFi Network 10.x. The controller supplies the truth; if it omits a port attribute, PortScope prints an em dash rather than making one up. Port layout is a generic index-based approximation, not a pixel-perfect front panel for every UniFi model.
+This build supports two local API surfaces: an **API key** uses the supported Integration API (`/proxy/network/integration/v1`) with read-only site/device/client inventory, while a **local account** uses the classic Network API (`/proxy/network/api`) for richer port telemetry, LLDP neighbors and port profiles. The key mode is suitable for baseline status, speed, connector and PoE-enabled reporting. The account mode is recommended for full graphical switchport reports. The controller supplies the truth; if it omits a port attribute, PortScope prints an em dash rather than making one up. Port layout is a generic index-based approximation, not a pixel-perfect front panel for every UniFi model.
 
-UniFi OS Cloud Key routes:
+UniFi OS Cloud Key routes (local account / classic API):
 
 ```text
 POST /api/auth/login              # only when username/password authentication is selected
@@ -27,7 +29,16 @@ GET  /proxy/network/api/s/{site}/rest/portconf
 GET  /proxy/network/api/s/{site}/rest/networkconf
 ```
 
-Standalone Network controllers use `POST /api/login` and no `/proxy/network` prefix. A local Network API key, when supported on classic endpoints, is sent in `X-API-Key`; whether a key is permitted to read legacy endpoints depends on the controller version and key permissions. **If the API key authenticates but the controller won't return port details, try a local Network account.** Cloud **Site Manager API** keys do *not* provide direct local port-level access and aren't interchangeable with local console API keys.
+API-key mode, using the official Network Integration API:
+
+```text
+GET /proxy/network/integration/v1/sites
+GET /proxy/network/integration/v1/sites/{siteId}/devices
+GET /proxy/network/integration/v1/sites/{siteId}/devices/{deviceId}
+GET /proxy/network/integration/v1/sites/{siteId}/clients
+```
+
+The official API paginates responses (PortScope retrieves all pages up to a defensive limit). Standalone Network uses `/integration/v1` without `/proxy/network`. The **Integration API key is not interchangeable with a cloud Site Manager key**. The official device API does not expose the complete historical `port_table` properties: unavailable telemetry is displayed as unknown, never zero. For per-port PoE power consumption, native VLAN/port profiles, LLDP and traffic/error counters use a local UniFi Network account instead.
 
 ## Windows 11 / Windows Server 2025 (quick start)
 
@@ -70,7 +81,7 @@ Open <http://127.0.0.1:8899>. The Docker compose configuration intentionally bin
 - Be on the same trusted LAN or a VPN with routing to the Cloud Key's **management address**.
 - UniFi OS Cloud Key usually uses `https://CLOUDKEY-IP` (443). Standalone Network often uses `https://SERVER-IP:8443`.
 - Make sure the selected account can **read the target UniFi Network site and devices**.
-- Local API keys can be created under UniFi Network **Settings → Integrations** (the exact navigation varies by Network version). For switchport data, you may need the local controller account if classic endpoints deny the key.
+- Local Network API keys can be created under UniFi Network **Settings → Integrations** (the exact navigation varies by version). PortScope sends them only to the officially supported local Integration API. For extended per-port data, use a local controller account instead.
 - Default setting is **certificate verification ON**. For an untrusted/self-signed local Cloud Key certificate, install the certificate/CA on the PortScope host (for custom CA bundles, set `PORTSCOPE_CA_BUNDLE` to the trusted PEM path before starting); alternatively, you may explicitly turn off verification while on an isolated trusted management LAN. This is less secure.
 - Port values come from adopted **UniFi** switches. Third-party switches connected to the Cloud Key are not inventoriable by this API. Offline devices may have stale or missing live port values.
 - Connected device / AP uplink mapping only appears when the controller provides a wired client association or AP uplink/LLDP. It is intentionally **not guessed** from IPs or names.
@@ -86,7 +97,7 @@ Open <http://127.0.0.1:8899>. The Docker compose configuration intentionally bin
 
 ## Compatibility notes / limitations
 
-- Intended first for **UniFi Network 10.x**, including deployments around 10.6.x. Actual compatibility with your Cloud Key version is verified only once you connect; this package has been tested with simulated controller responses, **not** against your Cloud Key.
+- Intended first for **UniFi Network 10.x**, including deployments around 10.6.x. Official API behavior verified against the documented 10.6 schema using tests, but not physical hardware. Actual compatibility with your Cloud Key version is verified only once you connect; this package has been tested with simulated controller responses, **not** against your Cloud Key.
 - This is a site inventory and switchport report, **not** a topology editor, switch configuration UI, historical traffic monitor or device-configuration management interface.
 - Some UniFi controller firmware/API combinations do not expose every field, such as native VLAN, PoE budget, negotiated speed or LLDP neighbors. Missing data is shown as `—` or "not confirmed."
 - Chrome/Edge Print → **Save as PDF** produces the printable landscape diagram report for the currently selected site. Report center also offers detailed CSV and JSON exports.
@@ -99,12 +110,12 @@ python -m pip install -r requirements.txt pytest
 python -m pytest -q
 ```
 
-Tests cover synthetic inventory, normalization, site boundaries, API allow-list, authentication, CSV export, and simulated Cloud Key endpoints. No hardware connection is needed for tests.
+Tests cover synthetic inventory, normalization, site boundaries, API allow-list, authentication, CSV export, official Integration API pagination/port parsing, and simulated classic Cloud Key endpoints. No hardware connection is needed for tests.
 
 ## References
 
 - [Official UniFi Local Application API overview](https://help.ui.com/hc/en-us/articles/30076656117655-Getting-Started-with-the-Official-UniFi-API)
-- [UniFi Network API Developer Portal](https://developer.ui.com/network/v10.0.162)
+- [UniFi Network API Developer Portal](https://developer.ui.com/network/v10.6.106)
 - [Community UniFi Network API endpoint reference](https://ubntwiki.com/products/software/unifi-controller/api)
 
 PortScope is an independent reporting tool, not an official Ubiquiti product.
