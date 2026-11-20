@@ -1,0 +1,16 @@
+services:
+  portscope:
+    build: .
+    container_name: unifi-portscope
+    restart: unless-stopped
+    environment:
+      - PORTSCOPE_ADMIN_PASSWORD=${PORTSCOPE_ADMIN_PASSWORD:?Set PORTSCOPE_ADMIN_PASSWORD in .env}
+      - PORTSCOPE_SESSION_SECRET=${PORTSCOPE_SESSION_SECRET:?Set PORTSCOPE_SESSION_SECRET in .env}
+      - PORTSCOPE_SECURE_COOKIES=${PORTSCOPE_SECURE_COOKIES:-0}
+    ports:
+      - "127.0.0.1:8899:8899"
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m

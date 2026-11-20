@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PortScope · UniFi switchport reporting</title>
+<link rel="stylesheet" href="/static/styles.css" />
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div id="loginOverlay" class="login-overlay" hidden>
+  <div class="login-card">
+    <div class="brand-mark big"><span class="mark-inner">P</span></div>
+    <p class="eyebrow">NETWORK OPERATIONS</p>
+    <h1>Welcome to PortScope.</h1>
+    <p class="subdued">Sign in to access the graphical UniFi switchport reporting console.</p>
+    <form id="loginForm" class="stack" autocomplete="off">
+      <label for="loginPass">Dashboard password</label>
+      <input type="password" id="loginPass" placeholder="Enter dashboard password" required autofocus autocomplete="current-password" />
+      <button class="btn primary wide" type="submit">Unlock dashboard <span aria-hidden="true">→</span></button>
+    </form>
+    <p class="help-copy">The password is displayed in the terminal on first launch, or configured with <code>PORTSCOPE_ADMIN_PASSWORD</code>.</p>
+  </div>
+</div>
+<div id="appShell" class="shell" hidden>
+  <aside class="sidebar">
+    <div class="brand"><div class="brand-mark"><span class="mark-inner">P</span></div><div class="brand-copy"><strong>PortScope</strong><small>UNIFI REPORTING</small></div></div>
+    <div class="sidebar-scroll">
+      <div class="side-section-title">WORKSPACE</div>
+      <nav id="mainNav" class="nav-list" aria-label="Dashboard sections">
+        <button class="nav-item active" data-view="overview"><span class="nav-icon">◫</span> Site overview</button>
+        <button class="nav-item" data-view="switches"><span class="nav-icon">▥</span> Switchports</button>
+        <button class="nav-item" data-view="aps"><span class="nav-icon">◉</span> Access points</button>
+        <button class="nav-item" data-view="report"><span class="nav-icon">▤</span> Report center</button>
+      </nav>
+      <div class="side-section-title site-label">CURRENT SITE</div>
+      <div class="site-picker"><label class="sr-only" for="siteSelect">Select site</label><select id="siteSelect"></select></div>
+      <div class="site-subtitle"><span class="dot green"></span><span id="siteSubtext">Site-scoped inventory</span></div>
+      <div class="side-section-title">DEVICE FILTER</div>
+      <div id="filterNav" class="filter-list">
+        <button class="filter-item active" data-filter="all"><span class="f-icon">⊞</span> All ports <span id="fAll" class="filter-count">–</span></button>
+        <button class="filter-item" data-filter="up"><span class="f-icon green-text">●</span> Connected <span id="fUp" class="filter-count">–</span></button>
+        <button class="filter-item" data-filter="poe"><span class="f-icon orange-text">ϟ</span> PoE ports <span id="fPoe" class="filter-count">–</span></button>
+        <button class="filter-item" data-filter="ap"><span class="f-icon purple-text">◉</span> AP uplinks <span id="fAp" class="filter-count">–</span></button>
+        <button class="filter-item" data-filter="errors"><span class="f-icon red-text">!</span> Port errors <span id="fErr" class="filter-count">–</span></button>
+      </div>
+    </div>
+    <div class="sidebar-footer">
+      <div id="sidebarController" class="side-controller"><span class="status-bullet"></span><div><strong>Demo workspace</strong><small>Sample inventory data</small></div></div>
+      <button class="btn ghost wide" id="sidebarConnect">⚙ &nbsp; Connection settings</button>
+    </div>
+  </aside>
+  <div class="main-panel">
+    <header class="topbar">
+      <div class="breadcrumb">Workspace <span>/</span> <strong id="breadcrumbName">Site overview</strong></div>
+      <div class="top-actions">
+        <span id="sourceBadge" class="chip demo-chip">● DEMO MODE</span>
+        <span id="timeBadge" class="refresh-time">Not refreshed</span>
+        <button id="refreshBtn" class="btn outline" title="Refresh inventory">↻ <span>Refresh</span></button>
+        <button id="connectionBtn" class="btn outline" title="Configure controller">⚙</button>
+        <button id="logoutBtn" class="btn outline" title="Sign out">⇥</button>
+      </div>
+    </header>
+    <main class="content">
+      <div class="page-heading">
+        <div><div class="eyebrow"><span class="subpurple">/</span> <span id="eyebrowSite">NETWORK INTELLIGENCE</span></div>
+          <h1 id="pageTitle">Network overview</h1><p id="pageSubtitle">Every switch, every port, one clear view of your site.</p></div>
+        <div class="heading-actions"><button id="printBtn" class="btn outline">▤ &nbsp; Print report</button><button id="exportBtn" class="btn primary">↓ &nbsp; Export CSV</button></div>
+      </div>
+      <div id="alertBox" class="notice" hidden></div>
+      <section id="summaryGrid" class="summary-grid" aria-label="Site statistics"></section>
+      <section id="overviewView" class="view active-view">
+        <div class="section-row"><div><h2>Switchport map</h2><p>Port-by-port visibility across your selected site</p></div><div class="section-tools"><label class="search"><span>⌕</span><input id="overviewSearch" type="search" placeholder="Search switches, ports, or clients" /></label></div></div>
+        <div class="legend"><span><i class="legend-dot up"></i> Connected</span><span><i class="legend-dot slow"></i> 10/100 Mbps</span><span><i class="legend-dot fast"></i> 10 Gbps+</span><span><i class="legend-dot down"></i> Disconnected</span><span><i class="legend-dot ap"></i> AP connection</span><span>ϟ PoE draw</span></div>
+        <div id="switchRackList" class="switch-rack-list"></div>
+        <div class="section-row ap-preview-head"><div><h2>Access point inventory</h2><p>Adoption status, clients, and detected uplinks</p></div><button id="seeAps" class="btn text-button">View all APs →</button></div>
+        <div id="apPreview" class="ap-grid"></div>
+        <section id="printAPSection" class="print-only"><h2>All access points</h2><div id="printAps" class="ap-grid"></div></section>
+      </section>
+      <section id="switchesView" class="view">
+        <div class="section-row"><div><h2>All managed switches</h2><p>Click a port to inspect its telemetry and connected devices</p></div><label class="search"><span>⌕</span><input id="switchSearch" type="search" placeholder="Filter switch name / model" /></label></div>
+        <div id="switchDetailsList" class="switch-rack-list"></div>
+      </section>
+      <section id="apsView" class="view"><div class="section-row"><div><h2>Access points</h2><p>AP inventory and connections as reported by UniFi</p></div></div><div id="allAps" class="ap-grid"></div></section>
+      <section id="reportView" class="view">
+        <div class="report-banner"><div><div class="eyebrow">SITE INVENTORY REPORT</div><h2 id="reportName">Site port report</h2><p id="reportDescription">Live inventory captured from controller</p></div><div class="report-actions"><button id="reportPrint" class="btn outline">▤ Print / PDF</button><button id="reportCSV" class="btn primary">↓ Export CSV</button><button id="reportJSON" class="btn outline">↓ JSON</button></div></div>
+        <div class="section-row"><div><h2>Port detail register</h2><p>Each line represents a reported switch port, including any LLDP and client associations</p></div></div>
+        <div class="report-table-wrap"><table class="report-table"><thead><tr><th>Switch</th><th>Port</th><th>Link</th><th>Speed</th><th>PoE</th><th>Profile / VLAN</th><th>Attached device</th><th>Errors</th></tr></thead><tbody id="reportRows"></tbody></table></div>
+        <div class="section-row report-ap-head"><div><h2>Access point register</h2><p>All managed APs in the selected site</p></div></div>
+        <div class="report-table-wrap"><table class="report-table"><thead><tr><th>Access point</th><th>Model</th><th>IP</th><th>Status</th><th>Clients</th><th>Confirmed uplink</th></tr></thead><tbody id="reportAPRows"></tbody></table></div>
+      </section>
+      <footer class="footer">UniFi PortScope v1.0 <span>·</span> Read-only collection <span>·</span> Unknown fields are shown as —</footer>
+    </main>
+  </div>
+</div>
+<div id="detailShade" class="detail-shade" hidden></div>
+<aside id="portDrawer" class="drawer" role="dialog" aria-modal="true" aria-label="Switch port details" hidden>
+  <div class="drawer-head"><div><p class="eyebrow">PORT INSPECTOR</p><h2 id="drawerTitle">Port</h2></div><button id="drawerClose" class="icon-btn" aria-label="Close port inspector">✕</button></div>
+  <div id="drawerContent" class="drawer-content"></div>
+</aside>
+<div id="connectionModal" class="modal-shade" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="connectTitle">
+    <div class="modal-title-row"><div><p class="eyebrow">CLOUD KEY CONNECTION</p><h2 id="connectTitle">Connect UniFi Network</h2><p>Local HTTPS connection. Nothing is changed on your switches.</p></div><button id="modalClose" class="icon-btn" aria-label="Close connection settings">✕</button></div>
+    <form id="connectForm" class="modal-form">
+      <label for="controllerUrl">Cloud Key address</label>
+      <input id="controllerUrl" name="controllerUrl" type="url" required placeholder="https://10.0.0.50" spellcheck="false" autocomplete="off" />
+      <div class="form-grid">
+        <div><label for="controllerMode">Controller type</label><select id="controllerMode"><option value="auto">Auto-detect</option><option value="unifios">UniFi OS / Cloud Key</option><option value="standalone">Standalone Network (:8443)</option></select></div>
+        <div><label for="authMode">Authentication</label><select id="authMode"><option value="api_key">Local Network API key</option><option value="password">Local admin account</option></select></div>
+      </div>
+      <div id="keyFields"><label for="apiKey">Local Network API key</label><input id="apiKey" type="password" spellcheck="false" autocomplete="off" placeholder="Paste locally generated API key" /><p class="field-tip">Use the key from the Network app's Integrations page on this Cloud Key, not a cloud Site Manager key.</p></div>
+      <div id="passwordFields" hidden><div class="form-grid"><div><label for="unifiUsername">Local username</label><input id="unifiUsername" autocomplete="off" placeholder="Local UniFi admin" /></div><div><label for="unifiPassword">Local password</label><input id="unifiPassword" type="password" autocomplete="off" placeholder="Local account password" /></div></div><p class="field-tip">A local read-only / limited-privilege account is recommended. Two-factor cloud logins may not work with the local API.</p></div>
+      <label class="checkbox-line"><input id="tlsVerify" type="checkbox" checked /><span>Verify the Cloud Key TLS certificate <small>(recommended)</small></span></label>
+      <p id="tlsWarning" class="warn-inline" hidden>Disabling certificate verification permits interception of API credentials. Only use on a trusted management LAN.</p>
+      <div id="connectionError" class="error-line" hidden></div>
+      <div class="modal-buttons"><button type="button" class="btn outline" id="demoModeBtn">Use demo data</button><div class="grow"></div><button type="button" class="btn ghost" id="cancelConnect">Cancel</button><button type="submit" class="btn primary" id="testConnectBtn">Connect &amp; load sites</button></div>
+    </form>
+  </div>
+</div>
+</body>
+</html>
