@@ -40,6 +40,10 @@ GET /proxy/network/integration/v1/sites/{siteId}/clients
 
 The official API paginates responses (PortScope retrieves all pages up to a defensive limit). Standalone Network uses `/integration/v1` without `/proxy/network`. The **Integration API key is not interchangeable with a cloud Site Manager key**. The official device API does not expose the complete historical `port_table` properties: unavailable telemetry is displayed as unknown, never zero. For per-port PoE power consumption, native VLAN/port profiles, LLDP and traffic/error counters use a local UniFi Network account instead.
 
+## Download from GitHub
+
+On the [UniFi-PortScope repository](https://github.com/rclevenger1969/UniFi-PortScope), choose **Code → Download ZIP**. The ZIP must contain `start-windows.bat`, `requirements.txt`, `app/main.py`, `app/official.py`, `app/unifi.py`, and `app/static/` (not just a README). Extract the full archive before starting. You can also clone it with `git clone https://github.com/rclevenger1969/UniFi-PortScope.git`.
+
 ## Windows 11 / Windows Server 2025 (quick start)
 
 1. Extract the ZIP to a folder, for example `C:\Tools\UniFi-PortScope`.
